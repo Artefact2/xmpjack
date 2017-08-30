@@ -12,9 +12,13 @@
 #include <unistd.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include <jack/jack.h>
 #include <xmp.h>
+
+#include <sys/select.h>
+#include <termios.h>
 
 static const char* const Notes[] = { "A-", "A#", "B-", "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#" };
 static const char* const notes[] = { "a-", "a#", "b-", "c-", "c#", "d-", "d#", "e-", "f-", "f#", "g-", "g#" };
@@ -29,6 +33,12 @@ static xmp_context xmpctx = NULL;
 static struct xmp_frame_info xmpfinfo;
 static size_t buffer_used = 0;
 static bool new_frame = true;
+
+static bool paused = false;
+static unsigned int prev_loop_count;
+static unsigned int loop = false;
+
+static struct termios cflags, pflags;
 
 /* Source is s16 interleaved stereo samples */
 static inline void convert_buffer(const int16_t* src, float* left, float* right, jack_nframes_t len) {	
@@ -49,9 +59,33 @@ static inline void clear_vis(void) {
 	printf("\r%*c\r", 2 * XMP_MAX_CHANNELS, ' ');
 }
 
+static void restore_term(void) {
+	tcsetattr(0, TCSANOW, &pflags);
+}
+
+static char get_command(void) {
+	static fd_set f;
+	static struct timeval t;
+	
+	/* select() on stdin (fd 0) for reading, do not block */
+	FD_ZERO(&f);
+	FD_SET(0, &f);
+	t.tv_sec = 0;
+	t.tv_usec = 1;
+
+	if(select(1, &f, NULL, NULL, &t) > 0) return getchar();
+	return 0;
+}
+
 static int jack_process(jack_nframes_t nframes, void* unused) {
 	float* lbuf = jack_port_get_buffer(left, nframes);
 	float* rbuf = jack_port_get_buffer(right, nframes);
+
+	if(paused) {
+		memset(lbuf, 0, nframes * sizeof(float));
+		memset(rbuf, 0, nframes * sizeof(float));
+		return 0;
+	}
 	
 	jack_nframes_t remaining = nframes;
 	
@@ -93,13 +127,33 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 	latency = range.max;
 }
 
-static void usage(char* me) {
-	fprintf(stderr, "Usage: %s <modfiles...>\n", me);
-	exit(1);
+static void usage(FILE* to, char* me) {
+	fprintf(
+		to,
+		"Usage: %s <modfiles...>\n"
+		"\n"
+		"Interactive commands:\n"
+		"\tq\tQuit the program\n"
+		"\tSPACE\tToggle play/pause\n"
+		"\tn\tPlay next module\n"
+		"\tp\tPlay previous module\n"
+		"\n"
+		, me);
 }
 
 int main(int argc, char** argv) {
-	if(argc == 1) usage(argv[0]);
+	if(argc == 1) {
+		usage(stderr, argv[0]);
+		exit(1);
+	}
+
+	atexit(restore_term);
+	tcgetattr(0, &pflags);
+	cflags = pflags;
+	cflags.c_lflag &= ~ECHO;
+	cflags.c_lflag &= ~ICANON;
+	cflags.c_lflag |= ECHONL;
+	tcsetattr(0, TCSANOW, &cflags);
 	
 	client = jack_client_open("xmpjack", JackNullOption, NULL);
 	if(client == NULL) return 1;
@@ -118,7 +172,6 @@ int main(int argc, char** argv) {
 	printf("Creating xmp context, libxmp version %s.\n", xmp_version);
 	xmpctx = xmp_create_context();
 
-
 	char chan_vis[2 * XMP_MAX_CHANNELS+1];
 	chan_vis[2 * XMP_MAX_CHANNELS] = '\0';
 	
@@ -134,6 +187,7 @@ int main(int argc, char** argv) {
 		/* Default xmp sample format: s16 stereo interleaved */
 		xmp_start_player(xmpctx, srate, 0);
 		render_frame();
+		prev_loop_count = 0;
 		
 		/* XXX: make these user tuneable */
 		xmp_set_player(xmpctx, XMP_PLAYER_AMP, 0);
@@ -145,9 +199,12 @@ int main(int argc, char** argv) {
 		jack_connect(client, "xmpjack:Left", "system:playback_1");
 		jack_connect(client, "xmpjack:Right", "system:playback_2");
 
-		do {
+		for(;;) {
 			if(new_frame) {
 				new_frame = false;
+
+				if(!loop && prev_loop_count != xmpfinfo.loop_count) break;
+				else prev_loop_count = xmpfinfo.loop_count;
 
 				const char* s;
 				for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
@@ -172,16 +229,56 @@ int main(int argc, char** argv) {
 				printf("\r%s", chan_vis);
 				fflush(stdout);
 			}
+
+			switch(get_command()) {
+			case 'q':
+				i = argc;
+				goto end;
+				break;
+
+			case ' ':
+				paused = !paused;
+				clear_vis();
+				printf("Pause: %s\n", paused ? "ON" : "OFF");
+				break;
+
+			case 'l':
+				loop = !loop;
+				clear_vis();
+				printf("Looping: %s\n", loop ? "ON" : "OFF");
+				break;
+
+			case 'n':
+				goto end;
+				break;
+
+			case 'p':
+				i -= 2;
+				goto end;
+				break;
+
+			case 'h':
+				clear_vis();
+				usage(stdout, argv[0]);
+				break;
+				
+			case 0:
+			default:
+				break;
+			}
 			
 			usleep(10000);
-		} while(xmpfinfo.loop_count == 0);
+		}
 
+	end:
 		jack_deactivate(client);
 		xmp_end_player(xmpctx);
 	}
 
 	xmp_free_context(xmpctx);
 	jack_client_close(client);
+	clear_vis();
+	printf("Exiting.\n");
 	return 0;
 }
 

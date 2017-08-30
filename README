@@ -20,9 +20,9 @@ Improvements
 ------------
 
 * Autoconnect toggle, better autoconnect code
-* Keyboard controls (pause, next/prev, toggle loop, etc.)
+* ~~Keyboard controls (pause, next/prev, toggle loop, etc.)~~
 * Shuffle mode
-* Loop mode
+* ~~Loop mode~~
 * ~~Cool visualisation~~
 * User-selectable interpolation, stereo separation, etc.
 * JACK transport (pause/play etc) support
