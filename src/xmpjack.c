@@ -11,9 +11,13 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #include <jack/jack.h>
 #include <xmp.h>
+
+static const char* const Notes[] = { "A-", "A#", "B-", "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#" };
+static const char* const notes[] = { "a-", "a#", "b-", "c-", "c#", "d-", "d#", "e-", "f-", "f#", "g-", "g#" };
 
 static jack_client_t* client = NULL;
 static jack_port_t* left = NULL;
@@ -24,6 +28,7 @@ static jack_nframes_t latency = 0;
 static xmp_context xmpctx = NULL;
 static struct xmp_frame_info xmpfinfo;
 static size_t buffer_used = 0;
+static bool new_frame = true;
 
 /* Source is s16 interleaved stereo samples */
 static inline void convert_buffer(const int16_t* src, float* left, float* right, jack_nframes_t len) {	
@@ -31,6 +36,17 @@ static inline void convert_buffer(const int16_t* src, float* left, float* right,
 		left[i]  = (float)src[2 * i]     / INT16_MAX;
 		right[i] = (float)src[2 * i + 1] / INT16_MAX;
 	}
+}
+
+static inline void render_frame(void) {
+	xmp_play_frame(xmpctx);
+	xmp_get_frame_info(xmpctx, &xmpfinfo);
+	buffer_used = 0;
+	new_frame = true;
+}
+
+static inline void clear_vis(void) {
+	printf("\r%*c\r", 2 * XMP_MAX_CHANNELS, ' ');
 }
 
 static int jack_process(jack_nframes_t nframes, void* unused) {
@@ -55,9 +71,8 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 		lbuf = &lbuf[towrite];
 		rbuf = &rbuf[towrite];
 		remaining -= towrite;
-		xmp_play_frame(xmpctx);
-		xmp_get_frame_info(xmpctx, &xmpfinfo);
-		buffer_used = 0;
+
+		render_frame();
 	}
 	
 	return 0;
@@ -71,7 +86,8 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 	jack_port_get_latency_range(left, mode, &range);
 	if(latency == range.max || range.max == 0) return;
 
-	printf("\rJACK playback latency: %d/%d frames (%.2f/%.2f ms)\n",
+	clear_vis();
+	printf("JACK playback latency: %d/%d frames (%.2f/%.2f ms)\n",
 		   range.min, range.max,
 		   1000.f * range.min / srate, 1000.f * range.max / srate);
 	latency = range.max;
@@ -101,7 +117,13 @@ int main(int argc, char** argv) {
 
 	printf("Creating xmp context, libxmp version %s.\n", xmp_version);
 	xmpctx = xmp_create_context();
+
+
+	char chan_vis[2 * XMP_MAX_CHANNELS+1];
+	chan_vis[2 * XMP_MAX_CHANNELS] = '\0';
+	
 	for(int i = 1; i < argc; ++i) {
+		clear_vis();
 		printf("Playing back %s.\n", argv[i]);
 
 		if(xmp_load_module(xmpctx, argv[i]) != 0) {
@@ -111,8 +133,7 @@ int main(int argc, char** argv) {
 
 		/* Default xmp sample format: s16 stereo interleaved */
 		xmp_start_player(xmpctx, srate, 0);
-		xmp_play_frame(xmpctx);
-		xmp_get_frame_info(xmpctx, &xmpfinfo);
+		render_frame();
 		
 		/* XXX: make these user tuneable */
 		xmp_set_player(xmpctx, XMP_PLAYER_AMP, 0);
@@ -125,7 +146,34 @@ int main(int argc, char** argv) {
 		jack_connect(client, "xmpjack:Right", "system:playback_2");
 
 		do {
-			sleep(1);
+			if(new_frame) {
+				new_frame = false;
+
+				const char* s;
+				for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
+					struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
+
+					if(info->instrument == 0 || info->note == 0 || info->volume == 0) {
+						s = "  ";
+					} else {
+						size_t note = (info->note + 3) % 12;
+
+						if(info->volume < 32) {
+							s = notes[note];
+						} else {
+							s = Notes[note];
+						}
+					}
+
+					chan_vis[2 * j] = s[0];
+					chan_vis[2 * j + 1] = s[1];
+				}
+
+				printf("\r%s", chan_vis);
+				fflush(stdout);
+			}
+			
+			usleep(10000);
 		} while(xmpfinfo.loop_count == 0);
 
 		jack_deactivate(client);
