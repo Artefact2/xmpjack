@@ -20,6 +20,9 @@
 #include <sys/select.h>
 #include <termios.h>
 
+/* +20dB = x10, +1 dB = 10^.05 */
+static float one_db = 1.12201845430196343559f;
+
 static const char* const Notes[] = { "A-", "A#", "B-", "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#" };
 static const char* const notes[] = { "a-", "a#", "b-", "c-", "c#", "d-", "d#", "e-", "f-", "f#", "g-", "g#" };
 
@@ -37,14 +40,16 @@ static bool new_frame = true;
 static bool paused = false;
 static unsigned int prev_loop_count;
 static unsigned int loop = false;
+static int gain_db = 0;
+static float gain_mul = 1.f;
 
 static struct termios cflags, pflags;
 
 /* Source is s16 interleaved stereo samples */
 static inline void convert_buffer(const int16_t* src, float* left, float* right, jack_nframes_t len) {	
 	for(jack_nframes_t i = 0; i < len; ++i) {
-		left[i]  = (float)src[2 * i]     / INT16_MAX;
-		right[i] = (float)src[2 * i + 1] / INT16_MAX;
+		left[i]  = (float)src[2 * i]     / INT16_MAX * gain_mul;
+		right[i] = (float)src[2 * i + 1] / INT16_MAX * gain_mul;
 	}
 }
 
@@ -137,6 +142,7 @@ static void usage(FILE* to, char* me) {
 		"\tSPACE\tToggle play/pause\n"
 		"\tn\tPlay next module\n"
 		"\tp\tPlay previous module\n"
+		"\t/*\tIncrease/decrease gain by 1 dB\n"
 		"\n"
 		, me);
 }
@@ -260,6 +266,17 @@ int main(int argc, char** argv) {
 			case 'h':
 				clear_vis();
 				usage(stdout, argv[0]);
+				break;
+
+			case '/':
+				gain_db -= 2;
+				gain_mul /= one_db;
+				gain_mul /= one_db;
+			case '*':
+				++gain_db;
+				gain_mul *= one_db;
+				clear_vis();
+				printf("Gain: %+d dB\n", gain_db);
 				break;
 				
 			case 0:
