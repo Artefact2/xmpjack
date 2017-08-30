@@ -69,7 +69,7 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 
 	jack_latency_range_t range;
 	jack_port_get_latency_range(left, mode, &range);
-	if(latency == range.max) return;
+	if(latency == range.max || range.max == 0) return;
 
 	printf("\rJACK playback latency: %d/%d frames (%.2f/%.2f ms)\n",
 		   range.min, range.max,
