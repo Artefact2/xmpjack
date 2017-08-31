@@ -42,6 +42,7 @@ static unsigned int prev_loop_count;
 static unsigned int loop = false;
 static int gain_db = 0;
 static float gain_mul = 1.f;
+static jack_time_t notif_until = 0;
 
 static struct termios cflags, pflags;
 
@@ -147,7 +148,22 @@ static void usage(FILE* to, char* me) {
 		, me);
 }
 
+static void print_notif(const char *fmt, ...) {
+	va_list ap;
+
+	notif_until = jack_get_time() + 1000000;
+	clear_vis();
+
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+	
+	fflush(stdout);
+}
+
 static void print_vis(void) {
+	if(jack_get_time() < notif_until) return;
+	
 	putchar('\r');
 	
 	for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
@@ -240,14 +256,12 @@ int main(int argc, char** argv) {
 
 			case ' ':
 				paused = !paused;
-				clear_vis();
-				printf("Pause: %s\n", paused ? "ON" : "OFF");
+				print_notif("Pause: %s", paused ? "ON" : "OFF");
 				break;
 
 			case 'l':
 				loop = !loop;
-				clear_vis();
-				printf("Looping: %s\n", loop ? "ON" : "OFF");
+				print_notif("Looping: %s", loop ? "ON" : "OFF");
 				break;
 
 			case 'n':
@@ -271,8 +285,7 @@ int main(int argc, char** argv) {
 			case '*':
 				++gain_db;
 				gain_mul *= one_db;
-				clear_vis();
-				printf("Gain: %+d dB\n", gain_db);
+				print_notif("Gain: %+d dB", gain_db);
 				break;
 				
 			case 0:
