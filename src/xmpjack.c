@@ -13,6 +13,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <string.h>
+#include <math.h>
 
 #include <jack/jack.h>
 #include <xmp.h>
@@ -169,14 +170,16 @@ static void print_vis(void) {
 	for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
 		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
 
-		if(info->instrument == 0 || info->note == 0 || info->volume == 0) {
+		if(info->period == 0 || info->volume == 0) {
 			fputs("  ", stdout);
 		} else {
+			size_t note = (size_t)roundf((fmodf(log2f(1.f / info->period), 1.f) + 1.f) * 12.f) % 12;
+			
 			printf("%c[%d%sm%s%c[0m",
 				   27,
 				   31 + (info->instrument % 6),
 				   (info->volume >= 40) ? ";1" : "",
-				   (info->volume >= 20) ? Notes[(info->note + 3) % 12] : notes[(info->note + 3) % 12],
+				   (info->volume >= 20) ? Notes[note] : notes[note],
 				   27);
 		}
 	}
