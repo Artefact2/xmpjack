@@ -72,11 +72,11 @@ static char get_command(void) {
 	static fd_set f;
 	static struct timeval t;
 	
-	/* select() on stdin (fd 0) for reading, do not block */
+	/* select() on stdin for reading, do not block */
 	FD_ZERO(&f);
-	FD_SET(0, &f);
+	FD_SET(fileno(stdin), &f);
 	t.tv_sec = 0;
-	t.tv_usec = 1;
+	t.tv_usec = 0;
 
 	if(select(1, &f, NULL, NULL, &t) > 0) return getchar();
 	return 0;
@@ -147,6 +147,26 @@ static void usage(FILE* to, char* me) {
 		, me);
 }
 
+static void print_vis(void) {
+	putchar('\r');
+	
+	for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
+		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
+
+		if(info->instrument == 0 || info->note == 0 || info->volume == 0) {
+			fputs("  ", stdout);
+		} else {
+			printf("%c[%d%sm%s%c[0m",
+				   27,
+				   31 + (info->instrument % 6),
+				   (info->volume >= 40) ? ";1" : "",
+				   (info->volume >= 20) ? Notes[(info->note + 3) % 12] : notes[(info->note + 3) % 12],
+				   27);
+		}
+	}
+	fflush(stdout);
+}
+
 int main(int argc, char** argv) {
 	if(argc == 1) {
 		usage(stderr, argv[0]);
@@ -177,9 +197,6 @@ int main(int argc, char** argv) {
 
 	printf("Creating xmp context, libxmp version %s.\n", xmp_version);
 	xmpctx = xmp_create_context();
-
-	char chan_vis[2 * XMP_MAX_CHANNELS+1];
-	chan_vis[2 * XMP_MAX_CHANNELS] = '\0';
 	
 	for(int i = 1; i < argc; ++i) {
 		clear_vis();
@@ -212,28 +229,7 @@ int main(int argc, char** argv) {
 				if(!loop && prev_loop_count != xmpfinfo.loop_count) break;
 				else prev_loop_count = xmpfinfo.loop_count;
 
-				const char* s;
-				for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
-					struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
-
-					if(info->instrument == 0 || info->note == 0 || info->volume == 0) {
-						s = "  ";
-					} else {
-						size_t note = (info->note + 3) % 12;
-
-						if(info->volume < 32) {
-							s = notes[note];
-						} else {
-							s = Notes[note];
-						}
-					}
-
-					chan_vis[2 * j] = s[0];
-					chan_vis[2 * j + 1] = s[1];
-				}
-
-				printf("\r%s", chan_vis);
-				fflush(stdout);
+				print_vis();
 			}
 
 			switch(get_command()) {
