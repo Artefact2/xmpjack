@@ -24,8 +24,9 @@
 /* +20dB = x10, +1 dB = 10^.05 */
 static float one_db = 1.12201845430196343559f;
 
-static const char* const Notes[] = { "A-", "A#", "B-", "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#" };
-static const char* const notes[] = { "a-", "a#", "b-", "c-", "c#", "d-", "d#", "e-", "f-", "f#", "g-", "g#" };
+static const char* const Notes[] = { "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-", };
+static const char* const notes[] = { "c-", "c#", "d-", "d#", "e-", "f-", "f#", "g-", "g#", "a-", "a#", "b-", };
+static const int per_chan_vis = 3;
 
 static jack_client_t* client = NULL;
 static jack_port_t* left = NULL;
@@ -37,6 +38,8 @@ static xmp_context xmpctx = NULL;
 static struct xmp_frame_info xmpfinfo;
 static size_t buffer_used = 0;
 static bool new_frame = true;
+static size_t num_channels = 0;
+static size_t notif_len = 0;
 
 static bool paused = false;
 static unsigned int prev_loop_count;
@@ -63,10 +66,12 @@ static inline void render_frame(void) {
 }
 
 static inline void clear_vis(void) {
-	printf("\r%*c\r", 2 * XMP_MAX_CHANNELS, ' ');
+	printf("\r%*c\r", (int)((per_chan_vis * num_channels) >= notif_len ? (per_chan_vis * num_channels) : notif_len), ' ');
+	notif_len = 0;
 }
 
 static void restore_term(void) {
+	printf("%c[?25h", 27); /* Show cursor */
 	tcsetattr(0, TCSANOW, &pflags);
 }
 
@@ -128,7 +133,7 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 	if(latency == range.max || range.max == 0) return;
 
 	clear_vis();
-	printf("JACK playback latency: %d/%d frames (%.2f/%.2f ms)\n",
+	printf("JACK playback latency: %d~%d frames (%.2f~%.2f ms)\n",
 		   range.min, range.max,
 		   1000.f * range.min / srate, 1000.f * range.max / srate);
 	latency = range.max;
@@ -156,7 +161,7 @@ static void print_notif(const char *fmt, ...) {
 	clear_vis();
 
 	va_start(ap, fmt);
-	vprintf(fmt, ap);
+	notif_len = vprintf(fmt, ap);
 	va_end(ap);
 	
 	fflush(stdout);
@@ -164,22 +169,37 @@ static void print_notif(const char *fmt, ...) {
 
 static void print_vis(void) {
 	if(jack_get_time() < notif_until) return;
+
+	for(size_t j = XMP_MAX_CHANNELS - 1; j > 0; --j) {
+		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
+
+		if(info->period == 0 || info->volume == 0) continue;
+
+		if(j + 1 < num_channels) {
+			printf("\r%*c\r", (int)(per_chan_vis * num_channels), ' ');
+		}
+		num_channels = j + 1;
+		break;
+	}
 	
 	putchar('\r');
 	
-	for(size_t j = 0; j < XMP_MAX_CHANNELS; ++j) {
+	for(size_t j = 0; j < num_channels; ++j) {
 		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
 
 		if(info->period == 0 || info->volume == 0) {
-			fputs("  ", stdout);
+			printf("%*c", per_chan_vis, ' ');
 		} else {
-			size_t note = (size_t)roundf((fmodf(log2f(1.f / info->period), 1.f) + 1.f) * 12.f) % 12;
+			float foctave = log2f(1.f / info->period);
+			int octave = (int)floorf(foctave);
+			int note = ((int)roundf((foctave - octave) * 12.f) + 9) % 12;
 			
-			printf("%c[%d%sm%s%c[0m",
+			printf("%c[%d%sm%s%01d%c[0m",
 				   27,
 				   31 + (info->instrument % 6),
 				   (info->volume >= 40) ? ";1" : "",
 				   (info->volume >= 20) ? Notes[note] : notes[note],
+				   octave + 25,
 				   27);
 		}
 	}
@@ -199,6 +219,7 @@ int main(int argc, char** argv) {
 	cflags.c_lflag &= ~ICANON;
 	cflags.c_lflag |= ECHONL;
 	tcsetattr(0, TCSANOW, &cflags);
+	printf("%c[?25l", 27); /* Hide cursor */
 	
 	client = jack_client_open("xmpjack", JackNullOption, NULL);
 	if(client == NULL) return 1;
