@@ -323,6 +323,11 @@ int main(int argc, char** argv) {
 	end:
 		jack_deactivate(client);
 		xmp_end_player(xmpctx);
+
+		/* XXX: fixes "lingering channels when navigating"
+		 * bug. there's probably a way to avoid this altogether by
+		 * querying number of used channels? */
+		memset(&xmpfinfo, 0, sizeof(struct xmp_frame_info));
 	}
 
 	xmp_free_context(xmpctx);

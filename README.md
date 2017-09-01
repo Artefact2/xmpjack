@@ -18,6 +18,13 @@ Interactive commands:
 
 ~~~
 
+Dependencies
+------------
+
+* JACK
+* libxmp
+* a VT100-compatible terminal
+
 Demo (video)
 ------------
 
