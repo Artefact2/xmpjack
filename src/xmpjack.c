@@ -242,18 +242,18 @@ static int jack_xrun(void* unused) {
 }
 
 static int parse_args(int argc, char** argv) {
+	size_t j = 1;
+	
 	for(size_t i = 1; i < argc; ++i) {
 		char* arg = argv[i];
 		if(arg[0] != '-') {
 			/* Reached positional arguments */
 			return i;
-			break;
 		}
 
 		/* Stop parsing arguments after -- */
 		if(arg[0] == '-' && arg[1] == '-' && arg[2] == '\0') {
 			return i+1;
-			break;
 		}
 
 		/* XXX: I know this sucks hard, if you find a better way
@@ -261,8 +261,11 @@ static int parse_args(int argc, char** argv) {
 
 		if(arg[1] != '-') {
 			/* Parsing short options */
-			for(size_t j = 1; arg[j] != '\0'; ++j) {
-				switch(arg[j]) {
+			if(arg[j]) {
+				--i;
+				++j;
+				
+				switch(arg[j - 1]) {
 				case 'l': goto toggle_loop;
 				case 'p': goto toggle_pause;
 				case 's': goto shuffle;
@@ -271,10 +274,13 @@ static int parse_args(int argc, char** argv) {
 					fprintf(stderr, "Unknown option: -%c\n", arg[j]);
 					exit(1);
 				}
+			} else {
+				continue;
 			}
 		} else if(arg[1] == '-') {
 			/* Parsing long option */
 			char* name = &arg[2];
+			j = 1;
 
 			if(!strcmp("loop", name)) goto toggle_loop;
 			if(!strcmp("paused", name)) goto toggle_pause;
@@ -283,6 +289,8 @@ static int parse_args(int argc, char** argv) {
 			fprintf(stderr, "Unknown long option: %s\n", arg);
 			exit(1);
 		}
+
+		assert(false);
 
 	toggle_loop:
 		loop = !loop;
