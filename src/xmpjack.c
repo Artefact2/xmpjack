@@ -33,6 +33,10 @@ static jack_port_t* left = NULL;
 static jack_port_t* right = NULL;
 static unsigned int srate = 0;
 static jack_nframes_t latency = 0;
+static char* cleft = NULL;
+static char* cright = NULL;
+static bool want_autoconnect = true;
+static char* wanted_client_name = NULL;
 
 static xmp_context xmpctx = NULL;
 static struct xmp_frame_info xmpfinfo;
@@ -69,6 +73,13 @@ static inline void render_frame(void) {
 static inline void clear_vis(void) {
 	printf("\r%*c\r", (int)((per_chan_vis * num_channels) >= notif_len ? (per_chan_vis * num_channels) : notif_len), ' ');
 	notif_len = 0;
+}
+
+static inline void expect_next_argument(int argc, char** argv, int i) {
+	if(i == argc - 1) {
+		fprintf(stderr, "Expected another argument after: %s\n", argv[i]);
+		exit(1);
+	}
 }
 
 static void restore_term(void) {
@@ -146,6 +157,12 @@ static void usage(FILE* to, char* me) {
 		"Usage: %s [options] [--] <modfiles...>\n"
 		"\n"
 		"Options:\n"
+		"\t--jack-client-name foo\n"
+		"\t\tUse custom JACK client name (default xmpjack)\n"
+		"\t-n, --jack-no-autoconnect\n"
+		"\t\tDo not autoconnect to first available physical ports\n"
+		"\t--jack-connect-left foo, --jack-connect-right bar\n"
+		"\t\tConnect to specified JACK ports before playback\n"
 		"\t-l, --loop\n"
 		"\t\tEnable looping of modules (default is no looping)\n"
 		"\t-p, --paused\n"
@@ -268,7 +285,8 @@ static int parse_args(int argc, char** argv) {
 				switch(arg[j - 1]) {
 				case 'l': goto toggle_loop;
 				case 'p': goto toggle_pause;
-				case 's': goto shuffle;
+				case 's': goto toggle_shuffle;
+				case 'n': goto toggle_autoconnect;
 					
 				default:
 					fprintf(stderr, "Unknown option: -%c\n", arg[j]);
@@ -284,7 +302,11 @@ static int parse_args(int argc, char** argv) {
 
 			if(!strcmp("loop", name)) goto toggle_loop;
 			if(!strcmp("paused", name)) goto toggle_pause;
-			if(!strcmp("shuffle", name)) goto shuffle;
+			if(!strcmp("shuffle", name)) goto toggle_shuffle;
+			if(!strcmp("jack-connect-left", name)) goto connect_left;
+			if(!strcmp("jack-connect-right", name)) goto connect_right;
+			if(!strcmp("jack-no-autoconnect", name)) goto toggle_autoconnect;
+			if(!strcmp("jack-client-name", name)) goto jack_client_name;
 
 			fprintf(stderr, "Unknown long option: %s\n", arg);
 			exit(1);
@@ -300,9 +322,29 @@ static int parse_args(int argc, char** argv) {
 		paused = !paused;
 		continue;
 
-	shuffle:
-		want_shuffle = true;
+	toggle_shuffle:
+		want_shuffle = !want_shuffle;
 		continue;
+
+	connect_left:
+		expect_next_argument(argc, argv, i);
+		cleft = argv[++i];
+		continue;
+			
+	connect_right:
+		expect_next_argument(argc, argv, i);
+		cright = argv[++i];
+		continue;
+
+	toggle_autoconnect:
+		want_autoconnect = !want_autoconnect;
+		continue;
+
+	jack_client_name:
+		expect_next_argument(argc, argv, i);
+		wanted_client_name = argv[++i];
+		continue;
+		
 	}
 
 	return argc;
@@ -325,10 +367,16 @@ int main(int argc, char** argv) {
 	tcsetattr(0, TCSANOW, &cflags);
 	printf("%c[?25l", 27); /* Hide cursor */
 	
-	client = jack_client_open("xmpjack", JackNullOption, NULL);
+	client = jack_client_open(wanted_client_name == NULL ? "xmpjack" : wanted_client_name, JackNullOption, NULL);
 	if(client == NULL) return 1;
 
-	printf("JACK: client name is %s\n", jack_get_client_name(client));
+	const char* client_name = jack_get_client_name(client);
+	char lport_name[strlen(client_name) + 6];
+	char rport_name[strlen(client_name) + 7];
+	sprintf(lport_name, "%s:Left", client_name);
+	sprintf(rport_name, "%s:Right", client_name);
+	
+	printf("JACK: client name is %s\n", client_name);
 	printf("JACK: buffer size is %d frames\n", jack_get_buffer_size(client)); /* XXX: use callback */
 	printf("JACK: sample rate is %d Hz\n", srate = jack_get_sample_rate(client)); /* XXX: use callback (hard) */
 
@@ -369,9 +417,23 @@ int main(int argc, char** argv) {
 		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);		
 		jack_activate(client);
 
-		/* XXX */
-		jack_connect(client, "xmpjack:Left", "system:playback_1");
-		jack_connect(client, "xmpjack:Right", "system:playback_2");
+		if(want_autoconnect) {
+			const char** ports = jack_get_ports(client, NULL, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal | JackPortIsPhysical);
+			if(ports[0] == NULL) {
+				printf("JACK: no autoconnect candidates\n");
+			} else if(ports[1] == NULL) {
+				/* Mono setup? Should be rare */
+				jack_connect(client, lport_name, ports[0]);
+				jack_connect(client, rport_name, ports[0]);
+			} else {
+				jack_connect(client, lport_name, ports[0]);
+				jack_connect(client, rport_name, ports[1]);
+			}
+			jack_free(ports);
+		}
+		
+		if(cleft != NULL) jack_connect(client, lport_name, cleft);
+		if(cright != NULL) jack_connect(client, rport_name, cright);
 
 		for(;;) {
 			if(new_frame) {

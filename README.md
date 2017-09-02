@@ -39,7 +39,7 @@ amazing, libre software.
 Improvements
 ------------
 
-* Autoconnect toggle, better autoconnect code
+* ~~Autoconnect toggle, better autoconnect code~~
 * ~~Keyboard controls (pause, next/prev, toggle loop, etc.)~~
 * ~~Shuffle mode~~
 * Sequence support
@@ -48,3 +48,4 @@ Improvements
 * User-selectable interpolation, stereo separation, etc.
 * JACK transport (pause/play etc) support
 * JACK freewheel support
+* Seeking
