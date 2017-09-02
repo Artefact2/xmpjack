@@ -40,6 +40,7 @@ static char* wanted_client_name = NULL;
 static bool want_transport = true;
 
 static xmp_context xmpctx = NULL;
+static struct xmp_module_info xmpminfo;
 static struct xmp_frame_info xmpfinfo;
 static size_t buffer_used = 0;
 static bool new_frame = true;
@@ -94,7 +95,7 @@ static void restore_term(void) {
 	tcsetattr(0, TCSANOW, &pflags);
 }
 
-static char get_command(void) {
+static int get_command(void) {
 	static fd_set f;
 	static struct timeval t;
 	
@@ -104,7 +105,15 @@ static char get_command(void) {
 	t.tv_sec = 0;
 	t.tv_usec = 0;
 
-	if(select(1, &f, NULL, NULL, &t) > 0) return getchar();
+	if(select(1, &f, NULL, NULL, &t) > 0) {
+		char buf[64];
+		ssize_t nbytes = read(fileno(stdin), buf, 64);
+
+		if(nbytes == 1) return buf[0];
+		if(nbytes == 2) return (buf[0] << 8) | buf[1];
+		if(nbytes == 3) return (buf[0] << 16) | (buf[1] << 8) | buf[2];
+	}
+	
 	return 0;
 }
 
@@ -216,10 +225,11 @@ static void usage(FILE* to, char* me) {
 		"\n"
 		"Interactive commands:\n"
 		"\tq\tQuit the program\n"
-		"\tSPACE\tToggle play/pause\n"
+		"\tSPC\tToggle play/pause\n"
 		"\tn\tPlay next module\n"
 		"\tp\tPlay previous module\n"
 		"\t/*\tIncrease/decrease gain by 1 dB\n"
+		"\tUp/Dn\tPattern seeking\n"
 		"\n"
 		, me);
 }
@@ -255,6 +265,9 @@ static void shuffle_array(void** arr, size_t len) {
 
 static void print_vis(void) {
 	if(jack_get_time() < notif_until) return;
+	if(notif_len > 0) {
+		clear_vis();
+	}
 
 	for(size_t j = XMP_MAX_CHANNELS - 1; j > 0; --j) {
 		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
@@ -279,6 +292,7 @@ static void print_vis(void) {
 			float foctave = log2f(1.f / info->period);
 			int octave = (int)floorf(foctave);
 			int note = ((int)roundf((foctave - octave) * 12.f) + 9) % 12;
+			float vol = (float)info->volume / xmpminfo.vol_base;
 
 			octave += 25;
 			if(octave > 9) octave = 9;
@@ -287,8 +301,8 @@ static void print_vis(void) {
 			printf("%c[%d%sm%s%01d%c[0m",
 				   27,
 				   31 + (info->instrument % 6),
-				   (info->volume >= 40) ? ";1" : "",
-				   (info->volume >= 20) ? Notes[note] : notes[note],
+				   (vol >= .66) ? ";1" : "",
+				   (vol >= .33) ? Notes[note] : notes[note],
 				   octave,
 				   27);
 		}
@@ -460,6 +474,7 @@ int main(int argc, char** argv) {
 			fprintf(stderr, "\rModule %s could not be loaded by libxmp.\n", argv[i]);
 			continue;
 		}
+		xmp_get_module_info(xmpctx, &xmpminfo);
 		printf("\rPlaying back %s.\n", argv[i]);
 
 		/* Default xmp sample format: s16 stereo interleaved */
@@ -542,9 +557,21 @@ int main(int argc, char** argv) {
 				gain_mul *= one_db;
 				print_notif("Gain: %+d dB", gain_db);
 				break;
+
+			case 0x1b5b41: /* Up */
+			case 0x1b5b43: /* Right */
+				print_notif("Next pattern in POT [%02X/%02X]", (xmpfinfo.pos + 1) & 0xff, xmpminfo.mod->len);
+				xmp_next_position(xmpctx);
+				break;
+
+			case 0x1b5b42: /* Down */
+			case 0x1b5b44: /* Left */
+				print_notif("Previous pattern in POT [%02X/%02X]", (xmpfinfo.pos - 1) & 0xff, xmpminfo.mod->len);
+				xmp_prev_position(xmpctx);
+				break;
 				
-			case 0:
 			default:
+			case 0:
 				break;
 			}
 			

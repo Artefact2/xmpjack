@@ -7,15 +7,31 @@ JACK only.
 Released under the WTFPLv2, see COPYING for the full license text.
 
 ~~~
-Usage: xmpjack <modfiles...>
+Usage: xmpjack [options] [--] <modfiles...>
+
+Options:
+        --jack-client-name foo
+                Use custom JACK client name (default xmpjack)
+        -n, --jack-no-autoconnect
+                Do not autoconnect to first available physical ports
+        --jack-no-transport
+                Do not rely on JACK transport for play/pause/seek
+        --jack-connect-left foo, --jack-connect-right bar
+                Connect to specified JACK ports before playback
+        -l, --loop
+                Enable looping of modules (default is no looping)
+        -p, --paused
+                Don't automatically start playback
+        -s, --shuffle
+                Play back modules in random order
 
 Interactive commands:
         q       Quit the program
-        SPACE   Toggle play/pause
+        SPC     Toggle play/pause
         n       Play next module
         p       Play previous module
         /*      Increase/decrease gain by 1 dB
-
+        Up/Dn   Pattern seeking
 ~~~
 
 Dependencies
@@ -48,4 +64,4 @@ Improvements
 * User-selectable interpolation, stereo separation, etc.
 * ~~JACK transport (pause/play etc) support~~
 * JACK freewheel support
-* Seeking
+* ~~Seeking~~ (partial, will always be flawed)
