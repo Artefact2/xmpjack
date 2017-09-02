@@ -133,7 +133,7 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 	if(latency == range.max || range.max == 0) return;
 
 	clear_vis();
-	printf("JACK playback latency: %d~%d frames (%.2f~%.2f ms)\n",
+	printf("JACK: playback latency is %d~%d frames (%.2f~%.2f ms)\n",
 		   range.min, range.max,
 		   1000.f * range.min / srate, 1000.f * range.max / srate);
 	latency = range.max;
@@ -206,6 +206,12 @@ static void print_vis(void) {
 	fflush(stdout);
 }
 
+static int jack_xrun(void* unused) {
+	clear_vis();
+	printf("JACK: xrun :-(\n");
+	return 0;
+}
+
 int main(int argc, char** argv) {
 	if(argc == 1) {
 		usage(stderr, argv[0]);
@@ -224,12 +230,13 @@ int main(int argc, char** argv) {
 	client = jack_client_open("xmpjack", JackNullOption, NULL);
 	if(client == NULL) return 1;
 
-	printf("JACK client name: %s\n", jack_get_client_name(client));
-	printf("JACK buffer size: %d frames\n", jack_get_buffer_size(client));
-	printf("JACK sample rate: %d Hz\n", srate = jack_get_sample_rate(client));
+	printf("JACK: client name is %s\n", jack_get_client_name(client));
+	printf("JACK: buffer size is %d frames\n", jack_get_buffer_size(client)); /* XXX: use callback */
+	printf("JACK: sample rate is %d Hz\n", srate = jack_get_sample_rate(client)); /* XXX: use callback (hard) */
 
 	jack_set_process_callback(client, jack_process, NULL);
 	jack_set_latency_callback(client, jack_latency, NULL);
+	jack_set_xrun_callback(client, jack_xrun, NULL);
 
 	/* Default jack format: signed float */
 	left = jack_port_register(client, "Left", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput | JackPortIsTerminal, 0);
