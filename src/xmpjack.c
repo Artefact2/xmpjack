@@ -218,13 +218,17 @@ static void print_vis(void) {
 			float foctave = log2f(1.f / info->period);
 			int octave = (int)floorf(foctave);
 			int note = ((int)roundf((foctave - octave) * 12.f) + 9) % 12;
+
+			octave += 25;
+			if(octave > 9) octave = 9;
+			else if(octave < 0) octave = 0;
 			
 			printf("%c[%d%sm%s%01d%c[0m",
 				   27,
 				   31 + (info->instrument % 6),
 				   (info->volume >= 40) ? ";1" : "",
 				   (info->volume >= 20) ? Notes[note] : notes[note],
-				   octave + 25,
+				   octave,
 				   27);
 		}
 	}
