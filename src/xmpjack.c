@@ -37,6 +37,7 @@ static char* cleft = NULL;
 static char* cright = NULL;
 static bool want_autoconnect = true;
 static char* wanted_client_name = NULL;
+static bool want_transport = true;
 
 static xmp_context xmpctx = NULL;
 static struct xmp_frame_info xmpfinfo;
@@ -82,6 +83,12 @@ static inline void expect_next_argument(int argc, char** argv, int i) {
 	}
 }
 
+static inline void transport_update(void) {
+	if(!want_transport) return;
+	if(paused) jack_transport_stop(client);
+	else jack_transport_start(client);
+}
+
 static void restore_term(void) {
 	printf("%c[?25h", 27); /* Show cursor */
 	tcsetattr(0, TCSANOW, &pflags);
@@ -105,6 +112,14 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 	float* lbuf = jack_port_get_buffer(left, nframes);
 	float* rbuf = jack_port_get_buffer(right, nframes);
 
+	if(want_transport) {
+		jack_position_t pos;
+		jack_transport_state_t state = jack_transport_query(client, &pos);
+
+		paused = (state != JackTransportRolling);
+		/* XXX: handle timecode? */
+	}
+	
 	if(paused) {
 		memset(lbuf, 0, nframes * sizeof(float));
 		memset(rbuf, 0, nframes * sizeof(float));
@@ -151,6 +166,33 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 	latency = range.max;
 }
 
+static void jack_timebase(jack_transport_state_t state, jack_nframes_t nframes, jack_position_t* pos, int new_pos, void* unused) {
+	pos->valid = JackPositionBBT | JackPositionTimecode | JackBBTFrameOffset;
+	
+	pos->bar = 1 + xmpfinfo.pos;
+	pos->beats_per_minute = xmpfinfo.bpm;
+
+	/* XXX */
+	/* tick duration (ms) = 2500 / bpm */
+	/* beat duration (ms) = 60000 / bpm */
+
+	/* elapsed = (row * speed + frame) * 2500 / bpm */
+	/* beat = (row * speed + frame) * 2500 / bpm / (60000 / bpm) */
+	
+	pos->beat_type = 1.f;
+	pos->beats_per_bar = (xmpfinfo.num_rows * xmpfinfo.speed) / 24.f;
+	pos->beat = 1 + (xmpfinfo.row * xmpfinfo.speed + xmpfinfo.frame) / 24.f;
+
+	pos->ticks_per_beat = 24;
+	pos->bar_start_tick = xmpfinfo.frame + xmpfinfo.speed * xmpfinfo.row;
+	pos->tick = (xmpfinfo.frame + xmpfinfo.speed * xmpfinfo.row) % 24;
+
+	pos->frame_time = (double)xmpfinfo.time / 1000.0 + xmpfinfo.loop_count * (double)xmpfinfo.total_time / 1000.0;
+	pos->next_time = pos->frame_time + (double)xmpfinfo.frame_time / 1000000.0;
+	pos->bbt_offset = 0;
+	pos->frame = pos->frame_time * pos->frame_rate;
+}
+
 static void usage(FILE* to, char* me) {
 	fprintf(
 		to,
@@ -161,6 +203,8 @@ static void usage(FILE* to, char* me) {
 		"\t\tUse custom JACK client name (default xmpjack)\n"
 		"\t-n, --jack-no-autoconnect\n"
 		"\t\tDo not autoconnect to first available physical ports\n"
+		"\t--jack-no-transport\n"
+		"\t\tDo not rely on JACK transport for play/pause/seek\n"
 		"\t--jack-connect-left foo, --jack-connect-right bar\n"
 		"\t\tConnect to specified JACK ports before playback\n"
 		"\t-l, --loop\n"
@@ -307,6 +351,7 @@ static int parse_args(int argc, char** argv) {
 			if(!strcmp("jack-connect-right", name)) goto connect_right;
 			if(!strcmp("jack-no-autoconnect", name)) goto toggle_autoconnect;
 			if(!strcmp("jack-client-name", name)) goto jack_client_name;
+			if(!strcmp("jack-no-transport", name)) goto toggle_jack_transport;
 
 			fprintf(stderr, "Unknown long option: %s\n", arg);
 			exit(1);
@@ -343,6 +388,10 @@ static int parse_args(int argc, char** argv) {
 	jack_client_name:
 		expect_next_argument(argc, argv, i);
 		wanted_client_name = argv[++i];
+		continue;
+
+	toggle_jack_transport:
+		want_transport = !want_transport;
 		continue;
 		
 	}
@@ -384,6 +433,13 @@ int main(int argc, char** argv) {
 	jack_set_latency_callback(client, jack_latency, NULL);
 	jack_set_xrun_callback(client, jack_xrun, NULL);
 
+	if(want_transport) {
+		/* Be a transport master only if there is none currently */
+		if(!jack_set_timebase_callback(client, 1, jack_timebase, NULL)) {
+			printf("JACK: became timebase master\n");
+		}
+	}
+
 	/* Default jack format: signed float */
 	left = jack_port_register(client, "Left", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput | JackPortIsTerminal, 0);
 	right = jack_port_register(client, "Right", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput | JackPortIsTerminal, 0);
@@ -416,6 +472,7 @@ int main(int argc, char** argv) {
 		xmp_set_player(xmpctx, XMP_PLAYER_MIX, 100);
 		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);		
 		jack_activate(client);
+		transport_update();
 
 		if(want_autoconnect) {
 			const char** ports = jack_get_ports(client, NULL, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal | JackPortIsPhysical);
@@ -453,6 +510,7 @@ int main(int argc, char** argv) {
 
 			case ' ':
 				paused = !paused;
+				transport_update();
 				print_notif("Pause: %s", paused ? "ON" : "OFF");
 				break;
 

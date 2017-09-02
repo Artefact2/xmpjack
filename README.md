@@ -46,6 +46,6 @@ Improvements
 * ~~Loop mode~~
 * ~~Cool visualisation~~
 * User-selectable interpolation, stereo separation, etc.
-* JACK transport (pause/play etc) support
+* ~~JACK transport (pause/play etc) support~~
 * JACK freewheel support
 * Seeking
