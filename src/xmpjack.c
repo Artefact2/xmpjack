@@ -42,6 +42,7 @@ static size_t num_channels = 0;
 static size_t notif_len = 0;
 
 static bool paused = false;
+static bool want_shuffle = false;
 static unsigned int prev_loop_count;
 static unsigned int loop = false;
 static int gain_db = 0;
@@ -142,7 +143,15 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 static void usage(FILE* to, char* me) {
 	fprintf(
 		to,
-		"Usage: %s <modfiles...>\n"
+		"Usage: %s [options] [--] <modfiles...>\n"
+		"\n"
+		"Options:\n"
+		"\t-l, --loop\n"
+		"\t\tEnable looping of modules (default is no looping)\n"
+		"\t-p, --paused\n"
+		"\t\tDon't automatically start playback\n"
+		"\t-s, --shuffle\n"
+		"\t\tPlay back modules in random order\n"
 		"\n"
 		"Interactive commands:\n"
 		"\tq\tQuit the program\n"
@@ -165,6 +174,22 @@ static void print_notif(const char *fmt, ...) {
 	va_end(ap);
 	
 	fflush(stdout);
+}
+
+static void shuffle_array(void** arr, size_t len) {
+	/* Knuth array shuffle */
+
+	size_t r;
+	void* e;
+	
+	srand(jack_get_time());
+
+	for(size_t i = len - 1; i > 0; --i) {
+		r = rand() % (i + 1);
+		e = arr[i];
+		arr[i] = arr[r];
+		arr[r] = e;
+	}
 }
 
 static void print_vis(void) {
@@ -212,11 +237,72 @@ static int jack_xrun(void* unused) {
 	return 0;
 }
 
+static int parse_args(int argc, char** argv) {
+	for(size_t i = 1; i < argc; ++i) {
+		char* arg = argv[i];
+		if(arg[0] != '-') {
+			/* Reached positional arguments */
+			return i;
+			break;
+		}
+
+		/* Stop parsing arguments after -- */
+		if(arg[0] == '-' && arg[1] == '-' && arg[2] == '\0') {
+			return i+1;
+			break;
+		}
+
+		/* XXX: I know this sucks hard, if you find a better way
+		 * please tell me about it (other than using getopt) */
+
+		if(arg[1] != '-') {
+			/* Parsing short options */
+			for(size_t j = 1; arg[j] != '\0'; ++j) {
+				switch(arg[j]) {
+				case 'l': goto toggle_loop;
+				case 'p': goto toggle_pause;
+				case 's': goto shuffle;
+					
+				default:
+					fprintf(stderr, "Unknown option: -%c\n", arg[j]);
+					exit(1);
+				}
+			}
+		} else if(arg[1] == '-') {
+			/* Parsing long option */
+			char* name = &arg[2];
+
+			if(!strcmp("loop", name)) goto toggle_loop;
+			if(!strcmp("paused", name)) goto toggle_pause;
+			if(!strcmp("shuffle", name)) goto shuffle;
+
+			fprintf(stderr, "Unknown long option: %s\n", arg);
+			exit(1);
+		}
+
+	toggle_loop:
+		loop = !loop;
+		continue;
+
+	toggle_pause:
+		paused = !paused;
+		continue;
+
+	shuffle:
+		want_shuffle = true;
+		continue;
+	}
+
+	return argc;
+}
+
 int main(int argc, char** argv) {
 	if(argc == 1) {
 		usage(stderr, argv[0]);
 		exit(1);
 	}
+
+	int i0 = parse_args(argc, argv);
 
 	atexit(restore_term);
 	tcgetattr(0, &pflags);
@@ -245,14 +331,20 @@ int main(int argc, char** argv) {
 	printf("Creating xmp context, libxmp version %s.\n", xmp_version);
 	xmpctx = xmp_create_context();
 	
-	for(int i = 1; i < argc; ++i) {
+	if(want_shuffle) {
+		shuffle_array((void**)(&argv[i0]), argc - i0);
+	}
+	
+	for(int i = i0; i < argc; ++i) {
 		clear_vis();
-		printf("Playing back %s.\n", argv[i]);
 
+		printf("Loading %s...", argv[i]);
+		fflush(stdout);
 		if(xmp_load_module(xmpctx, argv[i]) != 0) {
-			fprintf(stderr, "Module %s could not be loaded by libxmp.\n", argv[i]);
+			fprintf(stderr, "\rModule %s could not be loaded by libxmp.\n", argv[i]);
 			continue;
 		}
+		printf("\rPlaying back %s.\n", argv[i]);
 
 		/* Default xmp sample format: s16 stereo interleaved */
 		xmp_start_player(xmpctx, srate, 0);

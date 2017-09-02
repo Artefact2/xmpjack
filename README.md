@@ -41,7 +41,7 @@ Improvements
 
 * Autoconnect toggle, better autoconnect code
 * ~~Keyboard controls (pause, next/prev, toggle loop, etc.)~~
-* Shuffle mode
+* ~~Shuffle mode~~
 * Sequence support
 * ~~Loop mode~~
 * ~~Cool visualisation~~
