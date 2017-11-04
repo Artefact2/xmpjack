@@ -1,5 +1,5 @@
 /* Author: Romain "Artefact2" Dal Maso <artefact2@gmail.com>
- * 
+ *
  * This program is free software. It comes without any warranty, to the
  * extent permitted by applicable law. You can redistribute it and/or
  * modify it under the terms of the Do What The Fuck You Want To Public
@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <assert.h>
 #include <stdbool.h>
@@ -58,7 +59,7 @@ static jack_time_t notif_until = 0;
 static struct termios cflags, pflags;
 
 /* Source is s16 interleaved stereo samples */
-static inline void convert_buffer(const int16_t* src, float* left, float* right, jack_nframes_t len) {	
+static inline void convert_buffer(const int16_t* src, float* left, float* right, jack_nframes_t len) {
 	for(jack_nframes_t i = 0; i < len; ++i) {
 		left[i]  = (float)src[2 * i]     / INT16_MAX * gain_mul;
 		right[i] = (float)src[2 * i + 1] / INT16_MAX * gain_mul;
@@ -98,7 +99,7 @@ static void restore_term(void) {
 static int get_command(void) {
 	static fd_set f;
 	static struct timeval t;
-	
+
 	/* select() on stdin for reading, do not block */
 	FD_ZERO(&f);
 	FD_SET(fileno(stdin), &f);
@@ -113,7 +114,7 @@ static int get_command(void) {
 		if(nbytes == 2) return (buf[0] << 8) | buf[1];
 		if(nbytes == 3) return (buf[0] << 16) | (buf[1] << 8) | buf[2];
 	}
-	
+
 	return 0;
 }
 
@@ -128,15 +129,15 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 		paused = (state != JackTransportRolling);
 		/* XXX: handle timecode? */
 	}
-	
+
 	if(paused) {
 		memset(lbuf, 0, nframes * sizeof(float));
 		memset(rbuf, 0, nframes * sizeof(float));
 		return 0;
 	}
-	
+
 	jack_nframes_t remaining = nframes;
-	
+
 	while(remaining > 0) {
 		if(buffer_used + 4 * remaining < xmpfinfo.buffer_size) {
 			/* Everything is already pre-generated */
@@ -144,11 +145,11 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 			buffer_used += 4 * remaining;
 			return 0;
 		}
-		
+
 		/* Partial read from end of buffer then render next frame */
 		jack_nframes_t towrite = (xmpfinfo.buffer_size - buffer_used) / 4;
 		assert(towrite <= remaining);
-		
+
 		convert_buffer(&xmpfinfo.buffer[buffer_used], lbuf, rbuf, towrite);
 		lbuf = &lbuf[towrite];
 		rbuf = &rbuf[towrite];
@@ -156,7 +157,7 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 
 		render_frame();
 	}
-	
+
 	return 0;
 }
 
@@ -177,7 +178,7 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 
 static void jack_timebase(jack_transport_state_t state, jack_nframes_t nframes, jack_position_t* pos, int new_pos, void* unused) {
 	pos->valid = JackPositionBBT | JackPositionTimecode | JackBBTFrameOffset;
-	
+
 	pos->bar = 1 + xmpfinfo.pos;
 	pos->beats_per_minute = xmpfinfo.bpm;
 
@@ -187,7 +188,7 @@ static void jack_timebase(jack_transport_state_t state, jack_nframes_t nframes, 
 
 	/* elapsed = (row * speed + frame) * 2500 / bpm */
 	/* beat = (row * speed + frame) * 2500 / bpm / (60000 / bpm) */
-	
+
 	pos->beat_type = 1.f;
 	pos->beats_per_bar = (xmpfinfo.num_rows * xmpfinfo.speed) / 24.f;
 	pos->beat = 1 + (xmpfinfo.row * xmpfinfo.speed + xmpfinfo.frame) / 24.f;
@@ -243,7 +244,7 @@ static void print_notif(const char *fmt, ...) {
 	va_start(ap, fmt);
 	notif_len = vprintf(fmt, ap);
 	va_end(ap);
-	
+
 	fflush(stdout);
 }
 
@@ -252,7 +253,7 @@ static void shuffle_array(void** arr, size_t len) {
 
 	size_t r;
 	void* e;
-	
+
 	srand(jack_get_time());
 
 	for(size_t i = len - 1; i > 0; --i) {
@@ -280,9 +281,9 @@ static void print_vis(void) {
 		num_channels = j + 1;
 		break;
 	}
-	
+
 	putchar('\r');
-	
+
 	for(size_t j = 0; j < num_channels; ++j) {
 		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
 
@@ -297,7 +298,7 @@ static void print_vis(void) {
 			octave += 25;
 			if(octave > 9) octave = 9;
 			else if(octave < 0) octave = 0;
-			
+
 			printf("%c[%d%sm%s%01d%c[0m",
 				   27,
 				   31 + (info->instrument % 6),
@@ -318,7 +319,7 @@ static int jack_xrun(void* unused) {
 
 static int parse_args(int argc, char** argv) {
 	size_t j = 1;
-	
+
 	for(size_t i = 1; i < argc; ++i) {
 		char* arg = argv[i];
 		if(arg[0] != '-') {
@@ -339,13 +340,13 @@ static int parse_args(int argc, char** argv) {
 			if(arg[j]) {
 				--i;
 				++j;
-				
+
 				switch(arg[j - 1]) {
 				case 'l': goto toggle_loop;
 				case 'p': goto toggle_pause;
 				case 's': goto toggle_shuffle;
 				case 'n': goto toggle_autoconnect;
-					
+
 				default:
 					fprintf(stderr, "Unknown option: -%c\n", arg[j]);
 					exit(1);
@@ -389,7 +390,7 @@ static int parse_args(int argc, char** argv) {
 		expect_next_argument(argc, argv, i);
 		cleft = argv[++i];
 		continue;
-			
+
 	connect_right:
 		expect_next_argument(argc, argv, i);
 		cright = argv[++i];
@@ -407,7 +408,7 @@ static int parse_args(int argc, char** argv) {
 	toggle_jack_transport:
 		want_transport = !want_transport;
 		continue;
-		
+
 	}
 
 	return argc;
@@ -429,7 +430,7 @@ int main(int argc, char** argv) {
 	cflags.c_lflag |= ECHONL;
 	tcsetattr(0, TCSANOW, &cflags);
 	printf("%c[?25l", 27); /* Hide cursor */
-	
+
 	client = jack_client_open(wanted_client_name == NULL ? "xmpjack" : wanted_client_name, JackNullOption, NULL);
 	if(client == NULL) return 1;
 
@@ -438,7 +439,7 @@ int main(int argc, char** argv) {
 	char rport_name[strlen(client_name) + 7];
 	sprintf(lport_name, "%s:Left", client_name);
 	sprintf(rport_name, "%s:Right", client_name);
-	
+
 	printf("JACK: client name is %s\n", client_name);
 	printf("JACK: buffer size is %d frames\n", jack_get_buffer_size(client)); /* XXX: use callback */
 	printf("JACK: sample rate is %d Hz\n", srate = jack_get_sample_rate(client)); /* XXX: use callback (hard) */
@@ -460,11 +461,11 @@ int main(int argc, char** argv) {
 
 	printf("Creating xmp context, libxmp version %s.\n", xmp_version);
 	xmpctx = xmp_create_context();
-	
+
 	if(want_shuffle) {
 		shuffle_array((void**)(&argv[i0]), argc - i0);
 	}
-	
+
 	for(int i = i0; i < argc; ++i) {
 		clear_vis();
 
@@ -481,11 +482,11 @@ int main(int argc, char** argv) {
 		xmp_start_player(xmpctx, srate, 0);
 		render_frame();
 		prev_loop_count = 0;
-		
+
 		/* XXX: make these user tuneable */
 		xmp_set_player(xmpctx, XMP_PLAYER_AMP, 0);
 		xmp_set_player(xmpctx, XMP_PLAYER_MIX, 100);
-		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);		
+		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);
 		jack_activate(client);
 		transport_update();
 
@@ -503,7 +504,7 @@ int main(int argc, char** argv) {
 			}
 			jack_free(ports);
 		}
-		
+
 		if(cleft != NULL) jack_connect(client, lport_name, cleft);
 		if(cright != NULL) jack_connect(client, rport_name, cright);
 
@@ -569,12 +570,12 @@ int main(int argc, char** argv) {
 				print_notif("Previous pattern in POT [%02X/%02X]", (xmpfinfo.pos - 1) & 0xff, xmpminfo.mod->len);
 				xmp_prev_position(xmpctx);
 				break;
-				
+
 			default:
 			case 0:
 				break;
 			}
-			
+
 			usleep(10000);
 		}
 
@@ -594,4 +595,3 @@ int main(int argc, char** argv) {
 	printf("Exiting.\n");
 	return 0;
 }
-
