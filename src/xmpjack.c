@@ -453,6 +453,21 @@ int main(int argc, char** argv) {
 		shuffle_array((void**)(&argv[i0]), argc - i0);
 	}
 
+	if(want_autoconnect) {
+		const char** ports = jack_get_ports(client, NULL, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal | JackPortIsPhysical);
+		if(ports[0] == NULL) {
+			printf("JACK: no autoconnect candidates\n");
+		} else if(ports[1] == NULL) {
+			/* Mono setup? Should be rare */
+			jack_connect(client, lport_name, ports[0]);
+			jack_connect(client, rport_name, ports[0]);
+		} else {
+			jack_connect(client, lport_name, ports[0]);
+			jack_connect(client, rport_name, ports[1]);
+		}
+		jack_free(ports);
+	}
+
 	for(int i = i0; i < argc; ++i) {
 		printf("\rLoading %s..." EOL, argv[i]);
 		fflush(stdout);
@@ -474,21 +489,6 @@ int main(int argc, char** argv) {
 		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);
 		jack_activate(client);
 		transport_update();
-
-		if(want_autoconnect) {
-			const char** ports = jack_get_ports(client, NULL, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal | JackPortIsPhysical);
-			if(ports[0] == NULL) {
-				printf("JACK: no autoconnect candidates\n");
-			} else if(ports[1] == NULL) {
-				/* Mono setup? Should be rare */
-				jack_connect(client, lport_name, ports[0]);
-				jack_connect(client, rport_name, ports[0]);
-			} else {
-				jack_connect(client, lport_name, ports[0]);
-				jack_connect(client, rport_name, ports[1]);
-			}
-			jack_free(ports);
-		}
 
 		if(cleft != NULL) jack_connect(client, lport_name, cleft);
 		if(cright != NULL) jack_connect(client, rport_name, cright);
