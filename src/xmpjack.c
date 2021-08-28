@@ -526,6 +526,7 @@ int main(int argc, char** argv) {
 
 			case 'p':
 				i -= 2;
+				if(i < i0) i = i0 - 1;
 				goto end;
 				break;
 
