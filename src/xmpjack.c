@@ -25,6 +25,7 @@
 /* +20dB = x10, +1 dB = 10^.05 */
 static float one_db = 1.12201845430196343559f;
 
+#define EOL "\e[0K\n"
 static const char* const Notes[] = { "C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-", };
 static const char* const notes[] = { "c-", "c#", "d-", "d#", "e-", "f-", "f#", "g-", "g#", "a-", "a#", "b-", };
 static const int per_chan_vis = 3;
@@ -71,11 +72,6 @@ static inline void render_frame(void) {
 	xmp_get_frame_info(xmpctx, &xmpfinfo);
 	buffer_used = 0;
 	new_frame = true;
-}
-
-static inline void clear_vis(void) {
-	printf("\r%*c\r", (int)((per_chan_vis * num_channels) >= notif_len ? (per_chan_vis * num_channels) : notif_len), ' ');
-	notif_len = 0;
 }
 
 static inline void expect_next_argument(int argc, char** argv, int i) {
@@ -169,8 +165,7 @@ static void jack_latency(jack_latency_callback_mode_t mode, void* unused) {
 	jack_port_get_latency_range(left, mode, &range);
 	if(latency == range.max || range.max == 0) return;
 
-	clear_vis();
-	printf("JACK: playback latency is %d~%d frames (%.2f~%.2f ms)\n",
+	printf("\rJACK: playback latency is %d~%d frames (%.2f~%.2f ms)" EOL,
 		   range.min, range.max,
 		   1000.f * range.min / srate, 1000.f * range.max / srate);
 	latency = range.max;
@@ -206,7 +201,7 @@ static void jack_timebase(jack_transport_state_t state, jack_nframes_t nframes, 
 static void usage(FILE* to, char* me) {
 	fprintf(
 		to,
-		"Usage: %s [options] [--] <modfiles...>\n"
+		"\rUsage: %s [options] [--] <modfiles...>" EOL
 		"\n"
 		"Options:\n"
 		"\t--jack-client-name foo\n"
@@ -239,11 +234,12 @@ static void print_notif(const char *fmt, ...) {
 	va_list ap;
 
 	notif_until = jack_get_time() + 1000000;
-	clear_vis();
 
+	putchar('\r');
 	va_start(ap, fmt);
 	notif_len = vprintf(fmt, ap);
 	va_end(ap);
+	printf("\e[0K");
 
 	fflush(stdout);
 }
@@ -266,24 +262,15 @@ static void shuffle_array(void** arr, size_t len) {
 
 static void print_vis(void) {
 	if(jack_get_time() < notif_until) return;
-	if(notif_len > 0) {
-		clear_vis();
-	}
 
 	for(size_t j = XMP_MAX_CHANNELS - 1; j > 0; --j) {
 		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
-
 		if(info->period == 0 || info->volume == 0) continue;
-
-		if(j + 1 < num_channels) {
-			printf("\r%*c\r", (int)(per_chan_vis * num_channels), ' ');
-		}
 		num_channels = j + 1;
 		break;
 	}
 
 	putchar('\r');
-
 	for(size_t j = 0; j < num_channels; ++j) {
 		struct xmp_channel_info* info = &xmpfinfo.channel_info[j];
 
@@ -308,12 +295,12 @@ static void print_vis(void) {
 				   27);
 		}
 	}
+	printf("\e[0K");
 	fflush(stdout);
 }
 
 static int jack_xrun(void* unused) {
-	clear_vis();
-	printf("JACK: xrun :-(\n");
+	printf("\rJACK: xrun :-(" EOL);
 	return 0;
 }
 
@@ -467,9 +454,7 @@ int main(int argc, char** argv) {
 	}
 
 	for(int i = i0; i < argc; ++i) {
-		clear_vis();
-
-		printf("Loading %s...", argv[i]);
+		printf("\rLoading %s..." EOL, argv[i]);
 		fflush(stdout);
 		if(xmp_load_module(xmpctx, argv[i]) != 0) {
 			fprintf(stderr, "\rModule %s could not be loaded by libxmp.\n", argv[i]);
@@ -545,7 +530,6 @@ int main(int argc, char** argv) {
 				break;
 
 			case 'h':
-				clear_vis();
 				usage(stdout, argv[0]);
 				break;
 
@@ -591,7 +575,6 @@ int main(int argc, char** argv) {
 
 	xmp_free_context(xmpctx);
 	jack_client_close(client);
-	clear_vis();
-	printf("Exiting.\n");
+	printf("\rExiting." EOL);
 	return 0;
 }
