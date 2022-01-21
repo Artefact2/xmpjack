@@ -16,6 +16,7 @@
 #include <string.h>
 #include <math.h>
 
+#include <pthread.h>
 #include <jack/jack.h>
 #include <xmp.h>
 
@@ -41,6 +42,7 @@ static bool want_autoconnect = true;
 static char* wanted_client_name = NULL;
 static bool want_transport = true;
 
+static pthread_mutex_t xmpctx_lock;
 static xmp_context xmpctx = NULL;
 static struct xmp_module_info xmpminfo;
 static struct xmp_frame_info xmpfinfo;
@@ -49,8 +51,7 @@ static bool new_frame = true;
 static size_t num_channels = 0;
 static size_t notif_len = 0;
 
-static bool paused = false; /* Has the user initiated a pause? */
-static bool playing = false; /* Can we generate samples in the process callback? */
+static bool paused = false;
 static bool want_shuffle = false;
 static unsigned int prev_loop_count;
 static unsigned int loop = false;
@@ -127,7 +128,7 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 		/* XXX: handle timecode? */
 	}
 
-	if(paused || !playing) {
+	if(paused || pthread_mutex_trylock(&xmpctx_lock)) {
 		memset(lbuf, 0, nframes * sizeof(float));
 		memset(rbuf, 0, nframes * sizeof(float));
 		return 0;
@@ -140,7 +141,7 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 			/* Everything is already pre-generated */
 			convert_buffer(&xmpfinfo.buffer[buffer_used], lbuf, rbuf, remaining);
 			buffer_used += 4 * remaining;
-			return 0;
+			goto end;
 		}
 
 		/* Partial read from end of buffer then render next frame */
@@ -155,6 +156,8 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 		render_frame();
 	}
 
+ end:
+	pthread_mutex_unlock(&xmpctx_lock);
 	return 0;
 }
 
@@ -448,13 +451,14 @@ int main(int argc, char** argv) {
 	right = jack_port_register(client, "Right", JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput | JackPortIsTerminal, 0);
 
 	printf("Creating xmp context, libxmp version %s.\n", xmp_version);
+	pthread_mutex_init(&xmpctx_lock, 0);
+	pthread_mutex_lock(&xmpctx_lock);
 	xmpctx = xmp_create_context();
 
 	if(want_shuffle) {
 		shuffle_array((void**)(&argv[i0]), argc - i0);
 	}
 
-	playing = false;
 	jack_activate(client);
 	transport_update();
 
@@ -488,12 +492,12 @@ int main(int argc, char** argv) {
 		xmp_start_player(xmpctx, srate, 0);
 		render_frame();
 		prev_loop_count = 0;
-		playing = true;
 
 		/* XXX: make these user tuneable */
 		xmp_set_player(xmpctx, XMP_PLAYER_AMP, 0);
 		xmp_set_player(xmpctx, XMP_PLAYER_MIX, 100);
 		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);
+		pthread_mutex_unlock(&xmpctx_lock);
 
 		for(;;) {
 			if(new_frame) {
@@ -567,7 +571,7 @@ int main(int argc, char** argv) {
 		}
 
 	end:
-		playing = false;
+		pthread_mutex_lock(&xmpctx_lock);
 		xmp_end_player(xmpctx);
 
 		/* XXX: fixes "lingering channels when navigating"
@@ -578,6 +582,7 @@ int main(int argc, char** argv) {
 
 	xmp_free_context(xmpctx);
 	jack_client_close(client);
+	pthread_mutex_destroy(&xmpctx_lock);
 	printf("\rExiting." EOL);
 	return 0;
 }

@@ -4,7 +4,7 @@ XMP_FLAGS=$(shell pkg-config --cflags --libs libxmp)
 default: build/xmpjack
 
 build/xmpjack: src/xmpjack.c build Makefile
-	clang -g -O2 -Wall -Wno-unused-parameter -lm $(JACK_FLAGS) $(XMP_FLAGS) -o $@ $<
+	clang -g -O2 -Wall -Wno-unused-parameter -lm -pthread $(JACK_FLAGS) $(XMP_FLAGS) -o $@ $<
 
 build:
 	mkdir $@
