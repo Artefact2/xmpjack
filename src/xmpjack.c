@@ -49,7 +49,8 @@ static bool new_frame = true;
 static size_t num_channels = 0;
 static size_t notif_len = 0;
 
-static bool paused = false;
+static bool paused = false; /* Has the user initiated a pause? */
+static bool playing = false; /* Can we generate samples in the process callback? */
 static bool want_shuffle = false;
 static unsigned int prev_loop_count;
 static unsigned int loop = false;
@@ -126,7 +127,7 @@ static int jack_process(jack_nframes_t nframes, void* unused) {
 		/* XXX: handle timecode? */
 	}
 
-	if(paused) {
+	if(paused || !playing) {
 		memset(lbuf, 0, nframes * sizeof(float));
 		memset(rbuf, 0, nframes * sizeof(float));
 		return 0;
@@ -453,20 +454,25 @@ int main(int argc, char** argv) {
 		shuffle_array((void**)(&argv[i0]), argc - i0);
 	}
 
+	playing = false;
+	jack_activate(client);
+	transport_update();
+
 	if(want_autoconnect) {
 		const char** ports = jack_get_ports(client, NULL, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput | JackPortIsTerminal | JackPortIsPhysical);
 		if(ports[0] == NULL) {
 			printf("JACK: no autoconnect candidates\n");
 		} else if(ports[1] == NULL) {
 			/* Mono setup? Should be rare */
-			jack_connect(client, lport_name, ports[0]);
-			jack_connect(client, rport_name, ports[0]);
+			cleft = cright = strdup(ports[0]);
 		} else {
-			jack_connect(client, lport_name, ports[0]);
-			jack_connect(client, rport_name, ports[1]);
+			cleft = strdup(ports[0]);
+			cright = strdup(ports[1]);
 		}
 		jack_free(ports);
 	}
+	if(cleft != NULL) jack_connect(client, lport_name, cleft);
+	if(cright != NULL) jack_connect(client, rport_name, cright);
 
 	for(int i = i0; i < argc; ++i) {
 		printf("\rLoading %s..." EOL, argv[i]);
@@ -482,16 +488,12 @@ int main(int argc, char** argv) {
 		xmp_start_player(xmpctx, srate, 0);
 		render_frame();
 		prev_loop_count = 0;
+		playing = true;
 
 		/* XXX: make these user tuneable */
 		xmp_set_player(xmpctx, XMP_PLAYER_AMP, 0);
 		xmp_set_player(xmpctx, XMP_PLAYER_MIX, 100);
 		xmp_set_player(xmpctx, XMP_PLAYER_INTERP, XMP_INTERP_NEAREST);
-		jack_activate(client);
-		transport_update();
-
-		if(cleft != NULL) jack_connect(client, lport_name, cleft);
-		if(cright != NULL) jack_connect(client, rport_name, cright);
 
 		for(;;) {
 			if(new_frame) {
@@ -565,7 +567,7 @@ int main(int argc, char** argv) {
 		}
 
 	end:
-		jack_deactivate(client);
+		playing = false;
 		xmp_end_player(xmpctx);
 
 		/* XXX: fixes "lingering channels when navigating"
